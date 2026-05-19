@@ -1,53 +1,67 @@
+
+"use client";
 import Link from "next/link";
+import { api } from "~/trpc/react";
 
-import { LatestPost } from "~/app/_components/post";
-import { api, HydrateClient } from "~/trpc/server";
-
-export default async function Home() {
-  const hello = await api.post.hello({ text: "from tRPC" });
-
-  void api.post.getLatest.prefetch();
+export default function Home() {
+  const { data: stats } = api.app.getRunCounts.useQuery();
+  const { data: runs, isLoading } = api.app.getRuns.useQuery();
 
   return (
-    <HydrateClient>
-      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
-        <div className="container flex flex-col items-center justify-center gap-12 px-4 py-16">
-          <h1 className="text-5xl font-extrabold tracking-tight sm:text-[5rem]">
-            Create <span className="text-[hsl(280,100%,70%)]">T3</span> App
-          </h1>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-8">
-            <Link
-              className="flex max-w-xs flex-col gap-4 rounded-xl bg-white/10 p-4 hover:bg-white/20"
-              href="https://create.t3.gg/en/usage/first-steps"
-              target="_blank"
-            >
-              <h3 className="text-2xl font-bold">First Steps →</h3>
-              <div className="text-lg">
-                Just the basics - Everything you need to know to set up your
-                database and authentication.
-              </div>
-            </Link>
-            <Link
-              className="flex max-w-xs flex-col gap-4 rounded-xl bg-white/10 p-4 hover:bg-white/20"
-              href="https://create.t3.gg/en/introduction"
-              target="_blank"
-            >
-              <h3 className="text-2xl font-bold">Documentation →</h3>
-              <div className="text-lg">
-                Learn more about Create T3 App, the libraries it uses, and how
-                to deploy it.
-              </div>
-            </Link>
+    <div className="space-y-8">
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { label: "Meetings", val: stats?.total ?? 0 },
+          { label: "Pending Issues", val: stats?.pending ?? 0 },
+          { label: "Approved Issues", val: stats?.approved ?? 0 },
+          { label: "Slack Digests Sent", val: stats?.slackSent ?? 0 },
+        ].map((s, i) => (
+          <div key={i} className="bg-zinc-900 border border-zinc-800 p-4 rounded-sm">
+            <div className="text-zinc-500 text-xs uppercase tracking-wider mb-2">{s.label}</div>
+            <div className="text-2xl font-semibold">{s.val}</div>
           </div>
-          <div className="flex flex-col items-center gap-2">
-            <p className="text-2xl text-white">
-              {hello ? hello.greeting : "Loading tRPC query..."}
-            </p>
-          </div>
+        ))}
+      </div>
 
-          <LatestPost />
+      <div className="bg-zinc-900 border border-zinc-800 rounded-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-zinc-800 text-sm font-semibold uppercase tracking-wider text-zinc-400">
+          Recent Meeting Runs
         </div>
-      </main>
-    </HydrateClient>
+        {isLoading ? (
+          <div className="p-8 text-center text-zinc-500">Loading...</div>
+        ) : runs?.length === 0 ? (
+          <div className="p-8 text-center text-zinc-500">No meeting runs yet.</div>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead className="bg-zinc-950 text-zinc-500 border-b border-zinc-800">
+              <tr>
+                <th className="px-4 py-2 font-normal">Date</th>
+                <th className="px-4 py-2 font-normal">Meeting</th>
+                <th className="px-4 py-2 font-normal">Status</th>
+                <th className="px-4 py-2 font-normal">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs?.map(run => (
+                <tr key={run.id} className="border-b border-zinc-800 hover:bg-zinc-800/50">
+                  <td className="px-4 py-3 text-zinc-400">{new Date(run.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 font-medium">{run.meeting_title}</td>
+                  <td className="px-4 py-3">
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-300">
+                      {run.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Link href={`/runs/${run.id}`} className="text-orange-500 hover:text-orange-400">
+                      Review &rarr;
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
   );
 }

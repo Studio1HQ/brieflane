@@ -11,9 +11,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
     "@corsair-dev/fireflies": "^0.1.1",
     "@corsair-dev/linear": "^0.1.2",
+    "@corsair-dev/mcp": "^0.1.18",
     "@corsair-dev/slack": "^0.1.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@openai/agents": "^0.11.4",
     "@t3-oss/env-nextjs": "^0.12.0",
     "@tanstack/react-query": "^5.69.0",
     "@trpc/client": "^11.0.0",
@@ -23,11 +27,13 @@
     "corsair": "^0.1.68",
     "dotenv": "^17.4.2",
     "next": "^15.2.3",
+    "openai": "^6.38.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "server-only": "^0.0.1",
     "superjson": "^2.2.1",
-    "zod": "^3.24.2"
+    "zod": "^4.4.3",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.15",

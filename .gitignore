@@ -44,3 +44,13 @@ yarn-error.log*
 
 # idea files
 .idea
+# -------------
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+.env
+.env.local
+.next/
+dist/
+build/

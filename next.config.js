@@ -5,6 +5,13 @@
 import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
-const config = {};
+const config = {
+  serverExternalPackages: [
+    "@openai/agents",
+    "@openai/agents-core",
+    "openai",
+    "@corsair-dev/mcp",
+  ],
+};
 
 export default config;
