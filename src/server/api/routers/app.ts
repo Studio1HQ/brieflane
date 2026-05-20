@@ -4,6 +4,28 @@ import { TRPCError } from "@trpc/server";
 import { db } from "~/server/db";
 import { corsair } from "~/server/corsair";
 
+import crypto from "crypto";
+
+// Ensure slack track table exists
+try {
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS slack_messages (
+      id TEXT PRIMARY KEY,
+      run_id TEXT,
+      message TEXT,
+      channels TEXT,
+      created_at INTEGER
+    )
+  `,
+  ).run();
+} catch (e) {
+  console.log(
+    "Slack messages table init error (can be ignored if already exists):",
+    e,
+  );
+}
+
 async function getLinearTeamId() {
   const settings = db
     .prepare(
@@ -32,6 +54,69 @@ async function getLinearTeamId() {
 }
 
 export const appOpsRouter = createTRPCRouter({
+  getSlackChannels: publicProcedure.query(async () => {
+    try {
+      const resp = await corsair.slack.api.channels.list({});
+      return resp?.channels || [];
+    } catch (e) {
+      console.error("Failed to fetch slack channels from corsair:", e);
+      return [];
+    }
+  }),
+
+  getSlackUsers: publicProcedure.query(async () => {
+    try {
+      const resp = await corsair.slack.api.users.list({});
+      return resp?.members || [];
+    } catch (e) {
+      console.error("Failed to fetch slack users from corsair:", e);
+      return [];
+    }
+  }),
+
+  sendSlackDispatch: publicProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        channels: z.array(z.string()),
+        message: z.string(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      let sentCount = 0;
+      for (const channel of input.channels) {
+        try {
+          await corsair.slack.api.messages.post({
+            channel,
+            text: input.message,
+          });
+          sentCount++;
+        } catch (e) {
+          console.error(`Failed to send slack message to ${channel}`, e);
+        }
+      }
+      if (sentCount > 0) {
+        db.prepare(
+          "UPDATE meeting_runs SET slack_summary_sent = 1 WHERE id = ?",
+        ).run(input.id);
+
+        try {
+          db.prepare(
+            "INSERT INTO slack_messages (id, run_id, message, channels, created_at) VALUES (?, ?, ?, ?, ?)",
+          ).run(
+            crypto.randomUUID(),
+            input.id,
+            input.message,
+            JSON.stringify(input.channels),
+            Date.now(),
+          );
+        } catch (e) {
+          console.error("Failed to insert into slack_messages:", e);
+        }
+      }
+      return { success: true, sentCount };
+    }),
+
   getLinearUsers: publicProcedure.query(async () => {
     try {
       const resp = await corsair.linear.api.users.list({});
@@ -127,7 +212,17 @@ export const appOpsRouter = createTRPCRouter({
         "SELECT * FROM draft_issues WHERE meeting_run_id = ? ORDER BY created_at ASC",
       )
       .all(input) as any[];
-    return { ...run, drafts };
+
+    let slackMessages = [];
+    try {
+      slackMessages = db
+        .prepare(
+          "SELECT * FROM slack_messages WHERE run_id = ? ORDER BY created_at ASC",
+        )
+        .all(input) as any[];
+    } catch (e) {}
+
+    return { ...run, drafts, slackMessages };
   }),
 
   updateDraft: publicProcedure
@@ -159,33 +254,68 @@ export const appOpsRouter = createTRPCRouter({
       const draft = db
         .prepare("SELECT * FROM draft_issues WHERE id = ?")
         .get(input) as any;
-      if (!draft || draft.status !== "draft") return { success: false };
+
+      if (!draft || draft.status !== "draft") {
+        return {
+          success: false,
+          reason: "Draft not found or not in draft state",
+        };
+      }
 
       try {
         const teamId = await getLinearTeamId();
-        if (teamId) {
-          const payload: any = {
-            title: draft.title,
-            description: draft.description || "",
-            teamId,
-            priority: draft.priority || 0,
-          };
-          if (draft.assignee_id) payload.assigneeId = draft.assignee_id;
 
-          const issue = await corsair.linear.api.issues.create(payload);
-
-          if (issue?.id) {
-            db.prepare(
-              "UPDATE draft_issues SET status = 'approved', linear_id = ? WHERE id = ?",
-            ).run(issue.id, input);
-            return { success: true, linear_id: issue.id };
-          }
+        if (!teamId) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "No Linear team ID available",
+          });
         }
+
+        const payload: any = {
+          title: String(draft.title || "").trim(),
+          description: String(draft.description || "").trim(),
+          teamId: String(teamId),
+          priority: Number(draft.priority ?? 0),
+        };
+
+        const BAD_ASSIGNEE_VALUES = [
+          "linear",
+          "unassigned",
+          "none",
+          "",
+          "null",
+          "undefined",
+        ];
+
+        const rawAssignee =
+          typeof draft.assigneeid === "string" ? draft.assigneeid.trim() : "";
+
+        if (
+          rawAssignee &&
+          !BAD_ASSIGNEE_VALUES.includes(rawAssignee.toLowerCase())
+        ) {
+          payload.assigneeId = rawAssignee;
+        }
+
+        const issue = await corsair.linear.api.issues.create(payload);
+
+        if (!issue?.id) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Linear did not return an issue id",
+          });
+        }
+
+        db.prepare(
+          "UPDATE draft_issues SET status = 'approved', linear_id = ? WHERE id = ?",
+        ).run(issue.id, input);
+
+        return { success: true, linear_id: issue.id };
       } catch (e: any) {
-        console.error("Failed creating linear issue:", e);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: e.message || "Failed to create issue in Linear",
+          message: e?.message || "Failed to create issue in Linear",
         });
       }
     }),
@@ -201,39 +331,119 @@ export const appOpsRouter = createTRPCRouter({
         "SELECT * FROM draft_issues WHERE meeting_run_id = ? AND status = 'draft'",
       )
       .all(input) as any[];
-    if (!drafts.length) return { success: true };
+
+    if (!drafts.length) {
+      return { success: true, approved: 0, failed: [] };
+    }
 
     const teamId = await getLinearTeamId();
+
+    if (!teamId) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "No Linear team ID available",
+      });
+    }
+
+    const BAD_ASSIGNEE_VALUES = [
+      "linear",
+      "unassigned",
+      "none",
+      "",
+      "null",
+      "undefined",
+    ];
+
+    const failed: Array<{ draftId: string; title: string; reason: string }> =
+      [];
+    let approved = 0;
+
     for (const draft of drafts) {
+      const title = String(draft.title || "").trim();
+
+      if (!title) {
+        failed.push({
+          draftId: String(draft.id),
+          title: "",
+          reason: "Missing issue title",
+        });
+        continue;
+      }
+
       try {
-        if (teamId) {
-          const payload: any = {
-            title: draft.title,
-            description: draft.description || "",
-            teamId,
-            priority: draft.priority || 0,
-          };
-          if (draft.assignee_id) payload.assigneeId = draft.assignee_id;
+        const payload: any = {
+          title,
+          teamId: String(teamId),
+        };
 
-          const issue = await corsair.linear.api.issues.create(payload);
-
-          if (issue?.id) {
-            db.prepare(
-              "UPDATE draft_issues SET status = 'approved', linear_id = ? WHERE id = ?",
-            ).run(issue.id, draft.id);
-            continue;
-          }
+        const rawDescription = String(draft.description || "").trim();
+        if (rawDescription) {
+          payload.description = rawDescription;
         }
+
+        const priority = Number(draft.priority ?? 0);
+        if (Number.isFinite(priority)) {
+          payload.priority = priority;
+        }
+
+        const rawAssignee =
+          typeof (draft.assignee_id ?? draft.assigneeid) === "string"
+            ? String(draft.assignee_id ?? draft.assigneeid).trim()
+            : "";
+
+        const normalizedAssignee = rawAssignee.toLowerCase();
+
+        if (rawAssignee && !BAD_ASSIGNEE_VALUES.includes(normalizedAssignee)) {
+          payload.assigneeId = rawAssignee;
+        }
+
+        let issue: any = null;
+
+        try {
+          issue = await corsair.linear.api.issues.create(payload);
+        } catch (primaryError: any) {
+          const fallbackPayload: any = {
+            title,
+            teamId: String(teamId),
+          };
+
+          issue = await corsair.linear.api.issues.create(fallbackPayload);
+        }
+
+        if (!issue?.id) {
+          failed.push({
+            draftId: String(draft.id),
+            title,
+            reason: "Linear did not return an issue id",
+          });
+          continue;
+        }
+
+        db.prepare(
+          "UPDATE draft_issues SET status = 'approved', linear_id = ? WHERE id = ?",
+        ).run(issue.id, draft.id);
+
+        approved++;
       } catch (e: any) {
-        console.error("Bulk approve linear create failed:", e);
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: e.message || "Failed to create issue in Linear",
+        console.error(
+          "Bulk approve linear create failed for draft:",
+          draft?.id,
+          e,
+        );
+
+        failed.push({
+          draftId: String(draft?.id ?? ""),
+          title: String(draft?.title ?? ""),
+          reason: e?.message || "Failed to create issue in Linear",
         });
       }
     }
 
-    return { success: true };
+    return {
+      success: failed.length === 0,
+      approved,
+      failed,
+    };
   }),
 
   sendSlackSummary: publicProcedure

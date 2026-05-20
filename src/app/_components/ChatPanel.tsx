@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "~/app/_store/chat";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 export function ChatPanel() {
   const { isOpen, toggleChat, messages, addMessage, updateMessage } =
@@ -87,7 +88,7 @@ export function ChatPanel() {
     <>
       <button
         onClick={toggleChat}
-        className="fixed bottom-6 right-6 h-12 w-12 bg-orange-500 hover:bg-orange-400 text-white rounded-full flex items-center justify-center shadow-lg z-50 transition-colors"
+        className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-(--app-accent) text-(--color-on-primary) shadow-(--shadow-soft) transition-colors hover:bg-(--app-accent-pressed)"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -95,7 +96,7 @@ export function ChatPanel() {
           viewBox="0 0 24 24"
           strokeWidth={1.5}
           stroke="currentColor"
-          className="w-6 h-6"
+          className="h-6 w-6"
         >
           <path
             strokeLinecap="round"
@@ -106,15 +107,15 @@ export function ChatPanel() {
       </button>
 
       {isOpen && (
-        <div className="fixed bottom-24 right-6 w-[400px] max-w-[calc(100vw-3rem)] h-[600px] max-h-[calc(100vh-8rem)] bg-zinc-900 border border-zinc-800 shadow-2xl rounded-sm flex flex-col z-50 overflow-hidden text-sm">
-          <div className="p-4 border-b border-zinc-800 bg-zinc-950 flex justify-between items-center">
-            <div className="font-semibold text-zinc-100 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
-              Ops Agent
+        <div className="fixed bottom-24 right-6 z-50 flex h-[600px] max-h-[calc(100vh-8rem)] w-[400px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-(--radius-md) border border-(--app-border) bg-(--app-panel) text-sm text-(--app-text) shadow-(--shadow-soft)">
+          <div className="flex items-center justify-between border-b border-(--app-border) bg-(--app-panel) p-4">
+            <div className="flex items-center gap-2 font-semibold text-(--app-text)">
+              <span className="h-2 w-2 rounded-full bg-(--app-accent) animate-pulse"></span>
+              Brief AI
             </div>
             <button
               onClick={toggleChat}
-              className="text-zinc-500 hover:text-zinc-300"
+              className="text-(--app-text-muted) transition-colors hover:text-(--app-text)"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -122,7 +123,7 @@ export function ChatPanel() {
                 viewBox="0 0 24 24"
                 strokeWidth={1.5}
                 stroke="currentColor"
-                className="w-5 h-5"
+                className="h-5 w-5"
               >
                 <path
                   strokeLinecap="round"
@@ -133,10 +134,10 @@ export function ChatPanel() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 font-sans text-zinc-300">
+          <div className="flex-1 space-y-4 overflow-y-auto p-4 font-sans text-(--app-text-body)">
             {messages.length === 0 && (
-              <div className="text-center text-zinc-500 mt-10">
-                <div className="text-4xl mb-4">🤖</div>
+              <div className="mt-10 text-center text-(--app-text-muted)">
+                <div className="mb-4 text-4xl">🤖</div>
                 <p>
                   Hello! I can help you manage Linear issues, lookup Slack
                   users, and review Fireflies meetings.
@@ -147,15 +148,21 @@ export function ChatPanel() {
             {messages.map((msg) => (
               <div
                 key={msg.id}
-                className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
+                className={`flex flex-col ${
+                  msg.role === "user" ? "items-end" : "items-start"
+                }`}
               >
                 <div
-                  className={`px-4 py-2 rounded-sm max-w-[85%] ${msg.role === "user" ? "bg-zinc-800 text-zinc-100" : "bg-transparent border border-zinc-800 text-zinc-300"}`}
+                  className={`max-w-[85%] rounded-(--radius-sm) px-4 py-2 ${
+                    msg.role === "user"
+                      ? "bg-(--app-panel-muted) text-(--app-text)"
+                      : "bg-(--app-panel) text-(--app-text)"
+                  }`}
                 >
                   {msg.status === "pending" ? (
-                    <div className="flex items-center gap-2 text-zinc-500 italic">
+                    <div className="flex items-center gap-2 italic text-(--app-text-muted)">
                       <svg
-                        className="animate-spin h-4 w-4"
+                        className="h-4 w-4 animate-spin"
                         xmlns="http://www.w3.org/2000/svg"
                         fill="none"
                         viewBox="0 0 24 24"
@@ -176,30 +183,33 @@ export function ChatPanel() {
                       </svg>
                       {msg.optimisticState}
                     </div>
+                  ) : msg.role === "assistant" ? (
+                    <MarkdownMessage content={msg.content} />
                   ) : (
                     <div className="whitespace-pre-wrap">{msg.content}</div>
                   )}
                 </div>
               </div>
             ))}
+
             <div ref={endRef} />
           </div>
 
           <form
             onSubmit={handleSubmit}
-            className="p-4 border-t border-zinc-800 bg-zinc-950 flex gap-2"
+            className="flex gap-2 border-t border-(--app-border) bg-(--app-panel) p-4"
           >
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask the Ops Agent..."
-              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-sm px-3 py-2 text-zinc-100 focus:outline-none focus:border-orange-500 transition-colors"
+              placeholder="Ask the Brief..."
+              className="flex-1 rounded-(--radius-full) border border-(--app-border) bg-(--app-bg) px-3 py-2 text-(--app-text) transition-colors placeholder:text-(--app-text-soft) focus:border-(--app-accent) focus:outline-none"
             />
             <button
               type="submit"
               disabled={!input.trim()}
-              className="bg-orange-500 text-white px-4 py-2 rounded-sm font-medium hover:bg-orange-400 disabled:opacity-50 transition-colors"
+              className="rounded-(--radius-full) bg-(--app-accent) px-4 py-2 font-medium text-(--color-on-primary) transition-colors hover:bg-(--app-accent-pressed) disabled:opacity-50"
             >
               &rarr;
             </button>
