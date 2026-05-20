@@ -15,7 +15,7 @@
 - **Fallback**: If Fireflies transcript or summary data is unavailable, the app falls back to the default summary and transcript defined in `brieflane\src\app\api\webhook\route.ts`.
 - **Analyze**: If `OPENAI_API_KEY` is present, the app uses the OpenAI Agents flow through Corsair's MCP adapter to generate a short meeting title, draft Linear issues, decisions, and risks.
 - **Persist**: The app stores meeting runs, decisions, risks, and draft issues in the local SQLite database `corsair.db`.
-- **Optional Slack**: The app can also post summaries or issues to Slack through the Corsair Slack plugin.
+- **Slack**: The app can also post summaries or issues to Slack through the Corsair Slack plugin.
 
 ## How to use it: 
 
@@ -146,7 +146,7 @@ The app also includes an AI agent for chat-based actions around meetings, Slack,
 - Fireflies account.
 - Linear API key.
 - Slack bot token and signing secret, if using Slack.
-- OpenAI API key, if using automatic AI generation.
+- OpenAI API key.
 - `CORSAIR_KEK` for Corsair configuration.
 
 ## Troubleshooting:
