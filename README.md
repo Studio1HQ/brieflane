@@ -1,126 +1,164 @@
-**Brieflane — Automate meeting transcripts → drafts, risks, decisions & Slack**
+**Brieflane: Automate meeting transcripts → issues, risks, decisions & Slack**
 
 **What this app is:**  
-- **Overview:** A small ops app that ingests meeting data (Fireflies), extracts summaries/transcripts, analyzes decisions & risks, drafts Linear issues, and optionally posts summaries/issues to Slack. [Corsair]("https://corsair.dev/") is the central orchestrator: it wires Fireflies, Linear and Slack together and exposes the webhook endpoint that powers the flow.  
+- **Overview:** A small ops app that ingests meeting data (Fireflies), extracts summaries/transcripts, analyzes decisions & risks, drafts Linear issues, and optionally posts summaries/issues to Slack. [Corsair](https://corsair.dev/) is the central orchestrator: it wires Fireflies, Linear, and Slack together and exposes the webhook endpoint that powers the flow.
 
-**High-level flow:**  
-- **Webhook**: Fireflies sends a webhook to the app when a meeting/transcript is available.  
-- **Fetch**: The app (via `Corsair` Fireflies plugin) attempts to fetch full transcript + summary.  
-- **Fallback**: If transcript/summary is not available (e.g., Fireflies paid tier required) the app uses an internal fallback transcript + summary so processing still works.  
-- **Analyze**: If `OPENAI_API_KEY` is present the app calls OpenAI Agent SDK provided via Corsair to: produce a compact meeting title, generate actionable draft Linear issues, and extract Decisions & Risks from the transcript/summary.  
-- **Persist**: Meeting runs and generated draft issues are persisted into a local SQLite DB (corsair.db).  
-- **Optional Slack**: The app can post the summary / draft issues to Slack using the Slack plugin (bot token + signing secret).  
-- **Manual/Test**: You can trigger the webhook locally (Postman / curl) to exercise the flow and verify fallbacks.
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/b8132c2c-23ff-4de1-89e3-ad1aefa6a209" />
 
-**How it works (components & important files):**  
-- **`Corsair`**: App bootstraps Corsair in corsair.ts and registers these plugins:
-  - Fireflies plugin (fetch transcripts & signature verification)
-  - Linear plugin (create/list users, prepare issues)
-  - Slack plugin (post messages using bot token)
-- **Webhook route**: The public webhook endpoint lives at route.ts. It:
-  - Accepts Fireflies webhooks (looks for `meetingId` / `transcriptId` / `id` in payload),
-  - Inserts an initial `meeting_run` row,
-  - Attempts to fetch transcript + summary via Corsair Fireflies API,
-  - Falls back to an internal transcript/summary if Fireflies data is unavailable [for testing purposes or if the user does not have a paid Fireflies subscription],
-  - Calls OpenAI to generate a meeting title, `issues[]`, `decisions[]`, `risks[]`,
-  - Stores `decisions`, `risks`, and creates `draft_issues` entries for later review.
-- **DB setup script**: setup-app-tables.cjs creates tables in corsair.db (see root script).
-- **OpenAI usage**: If `OPENAI_API_KEY` is set, the webhook uses OpenAI chat completions to produce draft issues, decisions and risks.
-- **Where to look in code**:
-  - Corsair setup: corsair.ts  
-  - Webhook handler & fallback logic: route.ts  
-  - DB table creation: setup-app-tables.cjs (root)
 
-**Features (quick):**  
-- Draft Linear issues automatically created as `draft_issues` from meeting content.  
-- Risk & Decisions extraction saved per meeting run.
-- Slack integration to push summaries or issues (configurable).
-- Fallback transcript/summary for testing or when Fireflies paid features are unavailable.
-- An AI Agent to chat about anythign related to to meeting, slack, and linear issues.
-- Local SQLite DB (corsair.db) for runs, drafts, and action logs.
+> **What is Corsair?** [Corsair](https://corsair.dev/) is a developer SDK that connects third-party services, like Fireflies, Linear, and Slack, through a single unified API. Instead of writing separate integration code for each service, you register plugins once and Corsair handles auth, credential encryption, and method routing for all of them.
 
-**Prerequisites:**  
-- Node (recommended v18+).  
-- A Fireflies account (paid tier required to reliably fetch summaries & transcripts). If you do not have paid Fireflies, the app still runs using the built-in fallback transcript/summary.  
-- Slack: create a Slack App and get a Bot Token and Signing Secret.  
-- Linear: generate a Linear API key for creating/listing issues/users.  
-- OpenAI API key (optional, required to generate draft issues/decisions/risks automatically).  
-- `CORSAIR_KEK` — an encryption key used by Corsair per the app config.
 
-**Environment variables** (create a .env at the repo root):
-- `FIREFLIES_API_KEY` — Fireflies API key (optional; required to fetch transcripts).  
-- `FIREFLIES_WEBHOOK_SECRET` — Fireflies webhook secret (used to verify incoming webhooks).  
-- `LINEAR_API_KEY` — Linear personal API key.  
-- `SLACK_BOT_TOKEN` — Slack bot token (e.g. `xoxb-...`).  
-- `SLACK_SIGNING_SECRET` — Slack signing secret (used if verifying requests).  
-- `OPENAI_API_KEY` — (optional) for automated issue/decision/risk generation.  
-- `CORSAIR_KEK` — required by `corsair` in corsair.ts.
+## High-level flow:
+- **Webhook**: Fireflies sends meeting data to the app through the webhook endpoint.
+- **Fetch**: The app uses the Corsair Fireflies plugin to fetch the transcript and summary.
+- **Fallback**: If Fireflies transcript or summary data is unavailable, the app falls back to the default summary and transcript defined in `brieflane\src\app\api\webhook\route.ts`.
+- **Analyze**: If `OPENAI_API_KEY` is present, the app uses the OpenAI Agents flow through Corsair's MCP adapter to generate a short meeting title, draft Linear issues, decisions, and risks.
+- **Persist**: The app stores meeting runs, decisions, risks, and draft issues in the local SQLite database `corsair.db`.
+- **Optional Slack**: The app can also post summaries or issues to Slack through the Corsair Slack plugin.
 
-Example .env snippet:
-```env
-FIREFLIES_API_KEY=your_fireflies_api_key_here
-FIREFLIES_WEBHOOK_SECRET=your_fireflies_webhook_secret_here
-LINEAR_API_KEY=your_linear_api_key_here
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_SIGNING_SECRET=...
-OPENAI_API_KEY=sk-...
-CORSAIR_KEK=some-secure-value
-```
+## How to use it: 
 
-**Local setup (step-by-step):**  
-- **1) Clone**
-  - `git clone <repo-url>`  
-  - `cd brieflane`
-- **2) Install**
-  - `npm install`
-- **3) Create .env** (fill the values above)
-- **4) Initialize DB tables**
-  - Run the bundled setup script to create necessary tables:
+### 1. Create a Fireflies account and prepare a meeting
+- Go to [Fireflies](https://app.fireflies.ai/) and create an account.
+- Add meeting content in either of these ways:
+  - Upload a meeting audio file that you downloaded from somewhere, or
+  - Join a real meeting with your teammates and let Fireflies capture it.
+- After the meeting appears in Fireflies, open **My Meetings** and click the meeting you want to use.
+<img width="1905" height="785" alt="image" src="https://github.com/user-attachments/assets/d3e97772-ea51-4874-aaf1-908820956ec3" />
+
+
+### 2. Copy the meeting ID from the Fireflies URL
+- Open the meeting details page in Fireflies.
+- Copy the meeting ID from the browser URL. It is the long id shown in the URL bar.
+<img width="1451" height="192" alt="image" src="https://github.com/user-attachments/assets/a4ee49d1-bff3-4bfa-b6b1-2bb838ecc764" />
+
+That meeting ID will be used in the webhook payload.
+
+### 3. Run the app locally
+- Clone the repo:
+  ```bash
+  git clone <repo-url>
+  cd brieflane
+  ```
+- Install dependencies:
+  ```bash
+  npm install
+  ```
+- Create a `.env` file in the project root and fill in the required values:
+  ```env
+  FIREFLIES_API_KEY=your_fireflies_api_key_here
+  FIREFLIES_WEBHOOK_SECRET=your_fireflies_webhook_secret_here
+  LINEAR_API_KEY=your_linear_api_key_here
+  SLACK_BOT_TOKEN=xoxb-...
+  SLACK_SIGNING_SECRET=...
+  OPENAI_API_KEY=sk-...
+  CORSAIR_KEK=some-secure-value
+  ```
+  To get the Fireflies, Linear, and Slack plugin keys, visit these pages for detailed step-by-step setup:
+  - [Fireflies credentials](https://docs.corsair.dev/plugins/fireflies/get-credentials)  
+  - [Linear credentials](https://docs.corsair.dev/plugins/linear/get-credentials)  
+  - [Slack credentials](https://docs.corsair.dev/plugins/slack/get-credentials)
+- Initialize the SQLite tables:
   ```bash
   node setup-app-tables.cjs
   ```
-  This will create corsair.db and the `meeting_runs`, `draft_issues`, and other tables.
-- **5) Run the app (dev)**
-  - `npm run dev`  
-  - The Next.js app runs on `http://localhost:3000` by default.
-- **6) Expose locally (optional for real webhooks)**
-  - Use `ngrok http 3000` (or equivalent) and register the `https://<your-ngrok>.ngrok.io/api/webhook` URL inside Fireflies as the webhook target.
-- **7) Test the webhook locally (Postman / curl)**  
-  - The webhook endpoint: `POST http://localhost:3000/api/webhook`  
-  - Minimal test payload (server looks for `meetingId`, `transcriptId`, or `id`):
+- Start the app:
   ```bash
-  curl -X POST http://localhost:3000/api/webhook \
-    -H "Content-Type: application/json" \
-    -d '{"meetingId":"test-123","eventType":"transcript.created"}'
+  npm run dev
   ```
-  - You will get JSON back describing the inserted `runId`, whether transcript was fetched, or whether fallback was used.
-  - If you want to exercise the OpenAI-driven issue generation, ensure `OPENAI_API_KEY` is set in .env.
 
-**Notes about Fireflies & fallback behavior:**  
-- Fireflies paid subscription is required to consistently retrieve full transcripts and summaries via the API. If the Fireflies API responds with a paid/permission error, the app will:
-  - Mark the run as using the fallback transcript/summary, and
-  - Continue processing (you can still test issue generation & Slack pushes).  
-- A built-in fallback transcript and summary exist in route.ts so you can test without live Fireflies data.
+### 4. Expose your local server with ngrok
+Run:
 
-**Testing & manual flows:**  
-- Use the Postman test above to simulate a Fireflies webhook and verify DB inserts and draft issue creation.  
-- Inspect corsair.db file (SQLite viewer or `sqlite3`) to see `meeting_runs`, `draft_issues`, and `action_logs`.  
-- Logs: webhook handler logs headers/body and processing steps to console — inspect terminal running `npm run dev`.
+```bash
+ngrok http 3000
+```
 
-**Troubleshooting tips:**  
-- If you see `Transcript fetch failed` in logs and `usedFallback: true`, either your Fireflies API key or webhook permissions (paid tier) are missing. Use the fallback to continue testing.  
-- If draft issues are not being generated, confirm `OPENAI_API_KEY` is present and valid.  
-- If Slack messages do not appear, confirm `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` and that your Slack app is installed to the target workspace and has chat scope permissions.
+Use the public ngrok URL for webhook testing. In this example, the webhook endpoint is:
 
-**Key files to review:**  
-- Main Corsair bootstrap: corsair.ts  
-- Webhook + processing logic: route.ts  
-- DB initializer: setup-app-tables.cjs
+```txt
+https://xyz-your-url.ngrok-free.dev/api/webhook
+```
+
+### 5. Trigger the webhook from Postman
+Open Postman and create a **POST** request to:
+
+```txt
+https://xyz-your-url.ngrok-free.dev/api/webhook
+```
+
+Set this header:
+
+```txt
+Content-Type: application/json
+```
+
+Set the body to **raw JSON** and use:
+
+```json
+{
+  "eventType": "Transcription",
+  "meetingId": "your_meeting_id_here",
+  "clientReferenceId": "test-session"
+}
+```
+
+- Replace `your_meeting_id_here` with the meeting id you copied from Fireflies.
+- `clientReferenceId` can be any name you want.
+
+If the request succeeds, you should get a **200 OK** response.
+
+### 6. What happens after 200 OK
+- The webhook is processed immediately.
+- The app creates a meeting run in the database.
+- It tries to fetch transcript and summary data from Fireflies.
+- It analyzes the meeting and creates draft issues, decisions, and risks.
+- Then you can open the app UI and see the generated data appear there in real time.
+
+### 7. Important Fireflies fallback note
+If you do **not** have a paid Fireflies account, transcript and summary fetches may not be available through the API. In that case, the app automatically falls back to the default summary and transcript already defined in:
+
+```txt
+brieflane\src\app\api\webhook\route.ts
+```
+
+You can edit that fallback content in code any time to test different meeting scenarios.
+
+## How it works in code:
+- **`corsair.ts`**: Bootstraps Corsair and registers the Fireflies, Linear, and Slack plugins.
+- **`brieflane\src\app\api\webhook\route.ts`**: Accepts webhook payloads, fetches transcript and summary, falls back if needed, calls AI generation, and stores the results.
+- **`setup-app-tables.cjs`**: Creates the SQLite tables used by the app.
+
+## AI agent: 
+The app also includes an AI agent for chat-based actions around meetings, Slack, and Linear. It uses the OpenAI Agents flow through Corsair's MCP adapter, based on the Corsair OpenAI Agents integration here: [https://docs.corsair.dev/mcp-adapters/openai-agents](https://docs.corsair.dev/mcp-adapters/openai-agents).
+
+## Features:
+- Draft Linear issues created from meeting content.
+- Decisions and risks extracted and saved per meeting run.
+- Slack integration for posting summaries or issues.
+- Fallback transcript and summary support for testing without paid Fireflies access.
+- AI chat agent for meeting, Slack, and Linear workflows.
+- Local SQLite database (`corsair.db`) for runs, drafts, and logs.
+
+## Prerequisites:
+- Node.js 18+ recommended.
+- Fireflies account.
+- Linear API key.
+- Slack bot token and signing secret, if using Slack.
+- OpenAI API key, if using automatic AI generation.
+- `CORSAIR_KEK` for Corsair configuration.
+
+## Troubleshooting:
+- If the transcript fetch fails and fallback is used, check your Fireflies plan and API access first.
+- If draft issues are missing, verify `OPENAI_API_KEY` is set correctly.
+- If Slack messages do not appear, verify the Slack app is installed and has the required permissions.
 
 **Docs & references:**  
-- Corsair docs: https://docs.corsair.dev/hosted-sdk/overview
-- Fireflies Get Credentials: https://docs.corsair.dev/plugins/fireflies/get-credentials
-- Linear Get Credentials: https://docs.corsair.dev/plugins/linear/get-credentials
-- Slack Get Credentials: https://docs.corsair.dev/plugins/slack/get-credentials
-- Corsair SDK docs: https://docs.corsair.dev/getting-started/introduction
-- Corsair Plugins: https://docs.corsair.dev/guides/plugins
+- Corsair overview: [https://docs.corsair.dev/hosted-sdk/overview](https://docs.corsair.dev/hosted-sdk/overview)  
+- Corsair introduction: [https://docs.corsair.dev/getting-started/introduction](https://docs.corsair.dev/getting-started/introduction)  
+- Corsair plugins: [https://docs.corsair.dev/guides/plugins](https://docs.corsair.dev/guides/plugins)  
+- OpenAI Agents via Corsair MCP adapter: [https://docs.corsair.dev/mcp-adapters/openai-agents](https://docs.corsair.dev/mcp-adapters/openai-agents)  
+- Fireflies credentials: [https://docs.corsair.dev/plugins/fireflies/get-credentials](https://docs.corsair.dev/plugins/fireflies/get-credentials)  
+- Linear credentials: [https://docs.corsair.dev/plugins/linear/get-credentials](https://docs.corsair.dev/plugins/linear/get-credentials)  
+- Slack credentials: [https://docs.corsair.dev/plugins/slack/get-credentials](https://docs.corsair.dev/plugins/slack/get-credentials)
